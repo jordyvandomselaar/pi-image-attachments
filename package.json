@@ -1,6 +1,6 @@
 {
   "name": "@jordyvd/pi-image-attachments",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Image attachments for Pi, including draft placeholders and screenshot tool-result promotion.",
   "author": "Jordy Van Domselaar",
