@@ -1,4 +1,4 @@
-# pi-image-attachments
+# @jordyvd/pi-image-attachments
 
 A distributable Pi extension package that brings image attachment behavior to Pi without any external runtime dependency beyond Pi itself.
 
@@ -12,15 +12,21 @@ A distributable Pi extension package that brings image attachment behavior to Pi
 - Screenshot tool results that save to `filePath` are promoted into inline image content so the agent can inspect them agentically.
 - The extension nudges Pi to prefer inline screenshots when the agent needs to inspect the image itself.
 
-## Local use
+## Use
 
-Try the package directly without installing:
+Install from npm:
+
+```bash
+npm install @jordyvd/pi-image-attachments
+```
+
+Or try the package directly without installing:
 
 ```bash
 pi -e /Users/jordyvandomselaar/workspace/personal/pi-image-attachments
 ```
 
-Or add it to Pi settings as a local package source.
+You can also add it to Pi settings as a local package source.
 
 ## Package structure
 
