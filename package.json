@@ -9,6 +9,9 @@
     "type": "git",
     "url": "git+https://github.com/jordyvandomselaar/pi-image-attachments.git"
   },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "pi-package",
     "pi-extension",
