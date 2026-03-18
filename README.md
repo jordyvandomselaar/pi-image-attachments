@@ -14,8 +14,7 @@ A distributable Pi extension package that brings image attachment behavior to Pi
 
 ## Demo
 
-- [Watch the screen recording demo](https://github.com/jordyvandomselaar/pi-image-attachments/blob/main/media/pi-image-attachments-demo-2026-03-17.mp4)
-- The recording is committed to this repository under `media/`, but it is not published to npm.
+[Watch the screen recording demo](https://github.com/jordyvandomselaar/pi-image-attachments/blob/main/media/pi-image-attachments-demo-2026-03-17.mp4)
 
 ## Install
 
