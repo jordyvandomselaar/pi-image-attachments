@@ -12,6 +12,11 @@ A distributable Pi extension package that brings image attachment behavior to Pi
 - Screenshot tool results that save to `filePath` are promoted into inline image content so the agent can inspect them agentically.
 - The extension nudges Pi to prefer inline screenshots when the agent needs to inspect the image itself.
 
+## Demo
+
+- [Watch the screen recording demo](https://github.com/jordyvandomselaar/pi-image-attachments/blob/main/media/pi-image-attachments-demo-2026-03-17.mp4)
+- The recording is committed to this repository under `media/`, but it is not published to npm.
+
 ## Install
 
 From npm (recommended):
@@ -38,6 +43,8 @@ You can also point Pi at a local checkout while developing the extension.
 ## Package structure
 
 This package uses Pi's `pi.extensions` manifest in `package.json`, so Pi can load it from npm, git, or a local path.
+
+The npm publish is intentionally limited by the `files` whitelist in `package.json`, so repo-only assets like `media/pi-image-attachments-demo-2026-03-17.mp4` are kept out of the published package.
 
 ## Tests
 
