@@ -28,7 +28,7 @@ export type EditorHooks = {
 	sendImagesOnly: (images: ImageContent[]) => void;
 };
 
-export type EditorKeybindings = {
+type RuntimeKeybindings = {
 	matches(data: string, action: string): boolean;
 };
 
@@ -45,7 +45,6 @@ export type EditorBaseConstructor = new (...args: any[]) => EditorBase;
 
 export type AttachmentEditorDeps = {
 	BaseEditor: EditorBaseConstructor;
-	getEditorKeybindings: () => EditorKeybindings;
 	resolveCwd: () => string;
 	looksLikeImagePath: (filePath: string) => boolean;
 	readImageContentFromPath: (filePath: string) => ImageContent | null;
@@ -63,17 +62,32 @@ function extractBracketedPaste(data: string): string | null {
 	return data.slice(BRACKETED_PASTE_START.length, -BRACKETED_PASTE_END.length);
 }
 
+function isRuntimeKeybindings(value: unknown): value is RuntimeKeybindings {
+	return typeof value === "object" && value !== null && typeof (value as RuntimeKeybindings).matches === "function";
+}
+
+function matchesSubmitInput(keybindings: RuntimeKeybindings | undefined, data: string): boolean {
+	if (!keybindings) {
+		return false;
+	}
+
+	return keybindings.matches(data, "tui.input.submit") || keybindings.matches(data, "submit");
+}
+
 export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
 	const BaseEditor = deps.BaseEditor;
 
 	return class ImageAttachmentEditor extends BaseEditor {
 		private attachments: DraftAttachment[] = [];
 		private hooks: EditorHooks;
+		private keybindings: RuntimeKeybindings | undefined;
 
 		constructor(...args: any[]) {
 			const hooks = args.pop() as EditorHooks;
+			const runtimeKeybindings = args[2];
 			super(...args);
 			this.hooks = hooks;
+			this.keybindings = isRuntimeKeybindings(runtimeKeybindings) ? runtimeKeybindings : undefined;
 		}
 
 		override setText(text: string): void {
@@ -97,8 +111,7 @@ export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
 				return;
 			}
 
-			const editorKeys = deps.getEditorKeybindings();
-			const isSubmit = editorKeys.matches(data, "submit") && !(this.isShowingAutocomplete?.() ?? false);
+			const isSubmit = matchesSubmitInput(this.keybindings, data) && !(this.isShowingAutocomplete?.() ?? false);
 			if (isSubmit && this.attachments.length > 0) {
 				const fullText = (this.getExpandedText?.() ?? this.getText()).trim();
 				const usedAttachments = sortByPlaceholderNumber(

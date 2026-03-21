@@ -35,6 +35,12 @@ class FakeBaseEditor {
 	}
 }
 
+function createKeybindings(actions: string[] = ["tui.input.submit"]): { matches(data: string, action: string): boolean } {
+	return {
+		matches: (data, action) => data === "SUBMIT" && actions.includes(action),
+	};
+}
+
 describe("editor-factory", () => {
 	let tempDir: string;
 	let imagePath: string;
@@ -68,12 +74,10 @@ describe("editor-factory", () => {
 	function createEditor(options?: {
 		resizeImage?: (image: { type: "image"; data: string; mimeType: string }) => Promise<{ type: "image"; data: string; mimeType: string }>;
 		autocomplete?: boolean;
+		submitActions?: string[];
 	}) {
 		const Editor = createImageAttachmentEditor({
 			BaseEditor: FakeBaseEditor as any,
-			getEditorKeybindings: () => ({
-				matches: (data, action) => data === "SUBMIT" && action === "submit",
-			}),
 			resolveCwd: () => tempDir,
 			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
 			readImageContentFromPath,
@@ -83,7 +87,7 @@ describe("editor-factory", () => {
 				fs.rmSync(filePath, { force: true });
 			},
 		});
-		const editor = new Editor({}, {}, {}, {
+		const editor = new Editor({}, {}, createKeybindings(options?.submitActions), {
 			publishDraft: (attachments: DraftAttachment[]) => {
 				publishedDrafts.push([...attachments]);
 			},
@@ -117,6 +121,15 @@ describe("editor-factory", () => {
 			},
 		]);
 		expect(sentImageMessages).toEqual([]);
+	});
+
+	test("accepts legacy submit action names", () => {
+		const editor = createEditor({ submitActions: ["submit"] });
+		editor.insertTextAtCursor(imagePath);
+		editor.handleInput("SUBMIT");
+
+		expect(sentImageMessages).toHaveLength(1);
+		expect(queuedSubmissions).toEqual([]);
 	});
 
 	test("sends image-only drafts immediately", () => {

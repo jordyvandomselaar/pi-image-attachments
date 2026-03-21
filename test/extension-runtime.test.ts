@@ -33,6 +33,12 @@ class FakeBaseEditor {
 	}
 }
 
+function createKeybindings(actions: string[] = ["tui.input.submit"]): { matches(data: string, action: string): boolean } {
+	return {
+		matches: (data, action) => data === "SUBMIT" && actions.includes(action),
+	};
+}
+
 function createMockPi() {
 	const handlers = new Map<string, Array<(event: any, ctx: ExtensionContextLike) => any>>();
 	const sentMessages: Array<{ content: unknown; options: unknown }> = [];
@@ -75,7 +81,6 @@ describe("extension-runtime", () => {
 		const { pi, handlers } = createMockPi();
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
-			getEditorKeybindings: () => ({ matches: () => false }),
 			resolveCwd: () => "/cwd",
 			looksLikeImagePath: () => false,
 			readImageContentFromPath: () => null,
@@ -98,7 +103,6 @@ describe("extension-runtime", () => {
 		const { pi, handlers } = createMockPi();
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
-			getEditorKeybindings: () => ({ matches: (data, action) => data === "SUBMIT" && action === "submit" }),
 			resolveCwd: () => dir,
 			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
 			readImageContentFromPath,
@@ -107,7 +111,7 @@ describe("extension-runtime", () => {
 
 		const { ctx, widgets, getEditorFactory } = createContext(dir);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, {}, {});
+		const editor = getEditorFactory()?.({}, {}, createKeybindings(), {});
 		editor.insertTextAtCursor("Explain ");
 		editor.insertTextAtCursor(imagePath);
 		editor.handleInput("SUBMIT");
@@ -129,7 +133,6 @@ describe("extension-runtime", () => {
 		const { pi, handlers, sentMessages } = createMockPi();
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
-			getEditorKeybindings: () => ({ matches: (data, action) => data === "SUBMIT" && action === "submit" }),
 			resolveCwd: () => dir,
 			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
 			readImageContentFromPath,
@@ -138,7 +141,7 @@ describe("extension-runtime", () => {
 
 		const { ctx, getEditorFactory } = createContext(dir, false);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, {}, {});
+		const editor = getEditorFactory()?.({}, {}, createKeybindings(["submit"]), {});
 		editor.insertTextAtCursor(imagePath);
 		editor.handleInput("SUBMIT");
 
@@ -154,7 +157,6 @@ describe("extension-runtime", () => {
 		const { pi, handlers } = createMockPi();
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
-			getEditorKeybindings: () => ({ matches: () => false }),
 			resolveCwd: () => "/cwd",
 			looksLikeImagePath: () => false,
 			readImageContentFromPath: () => null,

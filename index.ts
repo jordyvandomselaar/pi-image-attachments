@@ -2,7 +2,6 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { CustomEditor } from "@mariozechner/pi-coding-agent";
-import { getEditorKeybindings } from "@mariozechner/pi-tui";
 import { loadImageContentFromPath, maybeResizeImage, readImageContentFromPath, type ImageResizer } from "./src/image-content.ts";
 import { registerImageAttachmentsExtension } from "./src/extension-runtime.ts";
 import { looksLikeImagePath } from "./src/path-utils.ts";
@@ -45,7 +44,6 @@ async function loadPiImageResizer(): Promise<ImageResizer | null> {
 export default function (pi: any): void {
 	registerImageAttachmentsExtension(pi, {
 		BaseEditor: CustomEditor as any,
-		getEditorKeybindings,
 		resolveCwd: () => process.cwd(),
 		looksLikeImagePath,
 		readImageContentFromPath,
