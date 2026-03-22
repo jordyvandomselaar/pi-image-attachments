@@ -74,9 +74,9 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 		ctx.ui.setWidget(EXTENSION_WIDGET_KEY, undefined);
 	};
 
-	pi.on("before_agent_start", () => {
+	pi.on("before_agent_start", (event) => {
 		return {
-			systemPrompt: PREFER_INLINE_SCREENSHOT_PROMPT,
+			systemPrompt: event.systemPrompt + "\n\n" + PREFER_INLINE_SCREENSHOT_PROMPT,
 		};
 	});
 
