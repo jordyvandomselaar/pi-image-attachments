@@ -87,8 +87,9 @@ describe("extension-runtime", () => {
 			loadImageContentFromPath: async () => null,
 		});
 
-		const promptResult = await handlers.get("before_agent_start")?.[0]?.({}, createContext("/cwd").ctx);
-		expect(promptResult).toEqual({ systemPrompt: PREFER_INLINE_SCREENSHOT_PROMPT });
+		const promptResult = await handlers
+			.get("before_agent_start")?.[0]?.({ systemPrompt: "Base prompt" }, createContext("/cwd").ctx);
+		expect(promptResult).toEqual({ systemPrompt: `Base prompt\n\n${PREFER_INLINE_SCREENSHOT_PROMPT}` });
 		expect(handlers.has("session_start")).toBe(true);
 		expect(handlers.has("session_switch")).toBe(true);
 		expect(handlers.has("tool_result")).toBe(true);
