@@ -45,6 +45,7 @@ export type EditorBaseConstructor = new (...args: any[]) => EditorBase;
 
 export type AttachmentEditorDeps = {
 	BaseEditor: EditorBaseConstructor;
+	getHooks: () => EditorHooks;
 	resolveCwd: () => string;
 	looksLikeImagePath: (filePath: string) => boolean;
 	readImageContentFromPath: (filePath: string) => ImageContent | null;
@@ -79,14 +80,11 @@ export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
 
 	return class ImageAttachmentEditor extends BaseEditor {
 		private attachments: DraftAttachment[] = [];
-		private hooks: EditorHooks;
 		private keybindings: RuntimeKeybindings | undefined;
 
 		constructor(...args: any[]) {
-			const hooks = args.pop() as EditorHooks;
-			const runtimeKeybindings = args[2];
 			super(...args);
-			this.hooks = hooks;
+			const runtimeKeybindings = args[2];
 			this.keybindings = isRuntimeKeybindings(runtimeKeybindings) ? runtimeKeybindings : undefined;
 		}
 
@@ -124,11 +122,11 @@ export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
 
 					if (!transformedText) {
 						this.clearDraft();
-						this.hooks.sendImagesOnly(images);
+						deps.getHooks().sendImagesOnly(images);
 						return;
 					}
 
-					this.hooks.queuePendingSubmission({
+					deps.getHooks().queuePendingSubmission({
 						matchText: fullText,
 						transformedText,
 						images,
@@ -214,7 +212,7 @@ export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
 		}
 
 		private publishDraft(): void {
-			this.hooks.publishDraft(this.attachments);
+			deps.getHooks().publishDraft(this.attachments);
 		}
 	};
 }

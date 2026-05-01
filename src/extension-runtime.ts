@@ -19,10 +19,12 @@ export type ExtensionContextLike = {
 	ui: {
 		setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
 		setEditorComponent(factory: ((...args: any[]) => any) | undefined): void;
+		getEditorComponent?(): ((...args: any[]) => any) | undefined;
 	};
 };
 
-export type ExtensionRuntimeDeps = AttachmentEditorDeps & {
+// Consumer-supplied deps. Internal `getHooks` is injected by the runtime below.
+export type ExtensionRuntimeDeps = Omit<AttachmentEditorDeps, "getHooks"> & {
 	loadImageContentFromPath: (filePath: string) => Promise<ImageContent | null>;
 };
 
@@ -31,6 +33,7 @@ const EXTENSION_WIDGET_KEY = "image-attachments";
 export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRuntimeDeps): void {
 	let currentDraftAttachments: DraftAttachment[] = [];
 	let pendingSubmission: PendingSubmission | undefined;
+	let currentCtx: ExtensionContextLike | undefined;
 
 	const refreshWidget = (ctx: ExtensionContextLike) => {
 		if (currentDraftAttachments.length === 0) {
@@ -45,26 +48,49 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 		ctx.ui.setWidget(EXTENSION_WIDGET_KEY, lines, { placement: "aboveEditor" });
 	};
 
-	const EditorClass = createImageAttachmentEditor(deps);
+	// Hooks are bound to module-level state via a closure rather than passed as a
+	// constructor arg. This keeps the editor class's constructor signature compatible
+	// with the standard `(tui, theme, keybindings)` shape, so other extensions can
+	// safely subclass it without having to know about our hook arg.
+	const getHooks = () => ({
+		publishDraft: (attachments: DraftAttachment[]) => {
+			currentDraftAttachments = [...attachments];
+			if (currentCtx) refreshWidget(currentCtx);
+		},
+		queuePendingSubmission: (submission: PendingSubmission) => {
+			pendingSubmission = submission;
+		},
+		sendImagesOnly: (images: ImageContent[]) => {
+			currentDraftAttachments = [];
+			pendingSubmission = undefined;
+			if (currentCtx) refreshWidget(currentCtx);
+			pi.sendUserMessage(images, currentCtx?.isIdle() ?? true ? undefined : { deliverAs: "steer" });
+		},
+	});
 
 	const installEditor = (ctx: ExtensionContextLike) => {
-		ctx.ui.setEditorComponent((...args: any[]) =>
-			new EditorClass(...args, {
-				publishDraft: (attachments: DraftAttachment[]) => {
-					currentDraftAttachments = [...attachments];
-					refreshWidget(ctx);
-				},
-				queuePendingSubmission: (submission: PendingSubmission) => {
-					pendingSubmission = submission;
-				},
-				sendImagesOnly: (images: ImageContent[]) => {
-					currentDraftAttachments = [];
-					pendingSubmission = undefined;
-					refreshWidget(ctx);
-					pi.sendUserMessage(images, ctx.isIdle() ? undefined : { deliverAs: "steer" });
-				},
-			}),
-		);
+		currentCtx = ctx;
+		// Composability: if a previous extension has already installed a custom editor,
+		// extend its class instead of CustomEditor so its overrides remain in the chain.
+		// See https://github.com/badlogic/pi-mono/issues/3935
+		const previous = ctx.ui.getEditorComponent?.();
+
+		ctx.ui.setEditorComponent((...args: any[]) => {
+			let BaseEditor = deps.BaseEditor;
+			if (previous) {
+				// Probe the previous factory once to obtain its class. The probe instance is
+				// discarded; the actual editor is constructed below via `new EditorClass(...)`,
+				// which fires each constructor in the chain exactly once for the mounted instance.
+				const probe = previous(...args);
+				const probeCtor = probe?.constructor;
+				if (typeof probeCtor === "function") {
+					BaseEditor = probeCtor as typeof BaseEditor;
+				}
+			}
+
+			const EditorClass = createImageAttachmentEditor({ ...deps, BaseEditor, getHooks });
+			return new EditorClass(...args);
+		});
 		refreshWidget(ctx);
 	};
 

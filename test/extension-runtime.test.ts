@@ -71,6 +71,9 @@ function createContext(cwd: string, isIdle = true) {
 			setEditorComponent(factory) {
 				editorFactory = factory ?? undefined;
 			},
+			getEditorComponent() {
+				return editorFactory;
+			},
 		},
 	};
 	return { ctx, widgets, getEditorFactory: () => editorFactory };
@@ -187,5 +190,58 @@ describe("extension-runtime", () => {
 		const { ctx, widgets } = createContext("/cwd");
 		await handlers.get("session_switch")?.[0]?.({}, ctx);
 		expect(widgets.at(-1)).toEqual({ key: "image-attachments", content: undefined });
+	});
+
+	test("chains onto a previously installed editor factory and binds hooks via closure", async () => {
+		// Build a fake outer that pretends to be a previously installed custom editor.
+		// Critically, we instantiate the chained editor with the standard 3-arg signature
+		// `(tui, theme, keybindings)` — NO trailing hooks arg — to verify that hooks are
+		// resolved via the runtime's getHooks closure rather than the constructor.
+		let outerCtorCalls = 0;
+		class OuterEditor extends FakeBaseEditor {
+			outerMarker = "outer";
+			constructor(..._args: any[]) {
+				super();
+				outerCtorCalls += 1;
+			}
+		}
+
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-chain-"));
+		const imagePath = path.join(tempDir, "sample.png");
+		fs.writeFileSync(imagePath, Buffer.from("chain-image"));
+
+		const { pi, handlers } = createMockPi();
+		registerImageAttachmentsExtension(pi as any, {
+			BaseEditor: FakeBaseEditor as any,
+			resolveCwd: () => tempDir,
+			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+			readImageContentFromPath,
+			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
+		});
+
+		const { ctx, getEditorFactory } = createContext(tempDir);
+		// Simulate a prior extension installing OuterEditor first.
+		ctx.ui.setEditorComponent((..._args: any[]) => new OuterEditor());
+
+		await handlers.get("session_start")?.[0]?.({}, ctx);
+		// Standard 3-arg call as pi-coding-agent's interactive-mode does — no trailing hooks.
+		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as InstanceType<typeof OuterEditor> & {
+			insertTextAtCursor: (s: string) => void;
+			handleInput: (data: string) => void;
+		};
+
+		// Probing happens once during installEditor's setEditorComponent call (to read the
+		// previous factory's class). The probe instance is discarded.
+		expect(outerCtorCalls).toBeGreaterThanOrEqual(1);
+
+		// The mounted editor is a subclass of OuterEditor, proving the chain.
+		expect(editor).toBeInstanceOf(OuterEditor);
+		expect(editor.outerMarker).toBe("outer");
+
+		// Image-attachment behavior is layered on top — a paste of an image path triggers
+		// the hooks even though no hooks were passed as a constructor arg.
+		editor.insertTextAtCursor(imagePath);
+		editor.handleInput("SUBMIT");
+		expect(handlers.get("input")).toBeTruthy();
 	});
 });

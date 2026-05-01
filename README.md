@@ -45,6 +45,12 @@ This package uses Pi's `pi.extensions` manifest in `package.json`, so Pi can loa
 
 The npm publish is intentionally limited by the `files` whitelist in `package.json`, so repo-only assets like `media/pi-image-attachments-demo-2026-03-17.mp4` are kept out of the published package.
 
+## Composability with other custom-editor extensions
+
+Pi 0.71+ exposes [`ctx.ui.getEditorComponent()`](https://github.com/badlogic/pi-mono/issues/3935), which lets extensions wrap a previously installed custom editor instead of replacing it. This package opts in: when another extension (for example, [`pi-vim`](https://www.npmjs.com/package/pi-vim)) has already installed a custom editor, image-attachments composes its overrides on top of that editor's class rather than collapsing back to the default `CustomEditor`.
+
+Practically: load order in `settings.json` no longer determines which extension wins. Whichever extension runs `session_start` first becomes the inner editor, and the next one wraps it.
+
 ## Tests
 
 ```bash

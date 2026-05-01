@@ -78,6 +78,17 @@ describe("editor-factory", () => {
 	}) {
 		const Editor = createImageAttachmentEditor({
 			BaseEditor: FakeBaseEditor as any,
+			getHooks: () => ({
+				publishDraft: (attachments: DraftAttachment[]) => {
+					publishedDrafts.push([...attachments]);
+				},
+				queuePendingSubmission: (submission: PendingSubmission) => {
+					queuedSubmissions.push(submission);
+				},
+				sendImagesOnly: (images) => {
+					sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
+				},
+			}),
 			resolveCwd: () => tempDir,
 			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
 			readImageContentFromPath,
@@ -87,17 +98,7 @@ describe("editor-factory", () => {
 				fs.rmSync(filePath, { force: true });
 			},
 		});
-		const editor = new Editor({}, {}, createKeybindings(options?.submitActions), {
-			publishDraft: (attachments: DraftAttachment[]) => {
-				publishedDrafts.push([...attachments]);
-			},
-			queuePendingSubmission: (submission: PendingSubmission) => {
-				queuedSubmissions.push(submission);
-			},
-			sendImagesOnly: (images) => {
-				sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
-			},
-		}) as FakeBaseEditor;
+		const editor = new Editor({}, {}, createKeybindings(options?.submitActions)) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}
