@@ -46,10 +46,6 @@ class FakePreviousEditor {
 		return this.text;
 	}
 
-	insertTextAtCursor(text: string): void {
-		this.text += text;
-	}
-
 	handleInput(data: string): void {
 		this.inputs.push(data);
 	}

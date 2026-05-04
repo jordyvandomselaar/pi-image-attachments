@@ -77,13 +77,15 @@ describe("editor-factory", () => {
 	function createEditor(options?: {
 		resizeImage?: (image: { type: "image"; data: string; mimeType: string }) => Promise<{ type: "image"; data: string; mimeType: string }>;
 		autocomplete?: boolean;
+		keybindings?: { matches(data: string, action: string): boolean } | null;
+		readImageContent?: typeof readImageContentFromPath;
 	}) {
 		const Editor = createImageAttachmentEditor(
 			{
 				BaseEditor: FakeBaseEditor as any,
 				resolveCwd: () => tempDir,
 				looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
-				readImageContentFromPath,
+				readImageContentFromPath: options?.readImageContent ?? readImageContentFromPath,
 				maybeResizeImage: options?.resizeImage,
 				unlinkFile: (filePath) => {
 					deletedPaths.push(filePath);
@@ -102,7 +104,11 @@ describe("editor-factory", () => {
 				},
 			},
 		);
-		const editor = new Editor({}, {}, createKeybindings()) as FakeBaseEditor;
+		const editor = new Editor(
+			{},
+			{},
+			options?.keybindings === null ? undefined : (options?.keybindings ?? createKeybindings()),
+		) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}
@@ -171,6 +177,21 @@ describe("editor-factory", () => {
 		editor.handleInput("SUBMIT");
 		editor.setText(` !ls [Image #1]`);
 		editor.handleInput("SUBMIT");
+		expect(queuedSubmissions).toEqual([]);
+		expect(sentImageMessages).toEqual([]);
+	});
+
+	test("delegates unhandled pasted input when keybindings are unavailable or images cannot be read", () => {
+		const editor = createEditor({ keybindings: null });
+		editor.handleInput("\u001b[200~   \u001b[201~");
+
+		expect(editor.inputs).toEqual(["\u001b[200~   \u001b[201~"]);
+		expect(publishedDrafts).toEqual([]);
+
+		const unreadableImageEditor = createEditor({ readImageContent: () => null });
+		unreadableImageEditor.insertTextAtCursor(imagePath);
+		expect(unreadableImageEditor.getText()).toBe(imagePath);
+		expect(publishedDrafts.at(-1)).toEqual([]);
 		expect(queuedSubmissions).toEqual([]);
 		expect(sentImageMessages).toEqual([]);
 	});
