@@ -28,6 +28,9 @@ class FakeBaseEditor {
 
 	handleInput(data: string): void {
 		this.inputs.push(data);
+		if (data.startsWith("REPLACE:")) {
+			this.text = data.slice("REPLACE:".length);
+		}
 	}
 
 	isShowingAutocomplete(): boolean {
@@ -177,7 +180,7 @@ describe("editor-factory", () => {
 		editor.insertTextAtCursor(imagePath);
 		expect(publishedDrafts.at(-1)).toHaveLength(1);
 
-		editor.setText("just text");
+		editor.handleInput("REPLACE:just text");
 		expect(publishedDrafts.at(-1)).toEqual([]);
 
 		editor.insertTextAtCursor(imagePath);
