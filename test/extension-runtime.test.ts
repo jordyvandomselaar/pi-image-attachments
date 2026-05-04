@@ -205,7 +205,6 @@ describe("extension-runtime", () => {
 		ctx.ui.setEditorComponent(downstreamFactory);
 
 		await handlers.get("session_switch")?.[0]?.({}, ctx);
-		expect(getEditorFactory()).toBe(downstreamFactory);
 
 		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor & {
 			insertTextAtCursor(text: string): void;
@@ -224,6 +223,65 @@ describe("extension-runtime", () => {
 			text: "Explain",
 			images: [readImageContentFromPath(imagePath)],
 		});
+	});
+
+	test("wraps the current editor again when another extension reinstalls before a session switch", async () => {
+		const dir = createTempDir("pi-image-runtime-reinstall-critic-");
+		const imagePath = path.join(dir, "sample.png");
+		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
+		const previousEditorFactory: EditorFactory = () => new FakePreviousEditor();
+
+		const { pi, handlers } = createMockPi();
+		registerImageAttachmentsExtension(pi as any, {
+			BaseEditor: FakeBaseEditor as any,
+			resolveCwd: () => dir,
+			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+			readImageContentFromPath,
+			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
+		});
+
+		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory);
+		await handlers.get("session_start")?.[0]?.({}, ctx);
+		ctx.ui.setEditorComponent(previousEditorFactory);
+		await handlers.get("session_switch")?.[0]?.({}, ctx);
+
+		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor & {
+			insertTextAtCursor(text: string): void;
+		};
+		editor.insertTextAtCursor(imagePath);
+		expect(widgets.at(-1)).toEqual({
+			key: "image-attachments",
+			content: ["Attached images:", "[Image #1] sample.png"],
+		});
+	});
+
+	test("uses the install context captured by each live editor", async () => {
+		const dir = createTempDir("pi-image-runtime-context-critic-");
+		const imagePath = path.join(dir, "sample.png");
+		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
+
+		const { pi, handlers } = createMockPi();
+		registerImageAttachmentsExtension(pi as any, {
+			BaseEditor: FakeBaseEditor as any,
+			resolveCwd: () => dir,
+			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+			readImageContentFromPath,
+			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
+		});
+
+		const sessionA = createContext(dir, true);
+		await handlers.get("session_start")?.[0]?.({}, sessionA.ctx);
+		const editorA = sessionA.getEditorFactory()?.({}, {}, createKeybindings());
+
+		const sessionB = createContext(dir, true);
+		await handlers.get("session_switch")?.[0]?.({}, sessionB.ctx);
+
+		editorA.insertTextAtCursor(imagePath);
+		expect(sessionA.widgets.at(-1)).toEqual({
+			key: "image-attachments",
+			content: ["Attached images:", "[Image #1] sample.png"],
+		});
+		expect(sessionB.widgets.at(-1)).toEqual({ key: "image-attachments", content: undefined });
 	});
 
 	test("sends image-only drafts with the correct idle and busy delivery modes", async () => {

@@ -35,8 +35,7 @@ const EXTENSION_WIDGET_KEY = "image-attachments";
 export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRuntimeDeps): void {
 	let currentDraftAttachments: DraftAttachment[] = [];
 	let pendingSubmission: PendingSubmission | undefined;
-	let activeContext: ExtensionContextLike;
-	let installedEditorFactory: EditorFactory | undefined;
+	const installedEditorParents = new WeakMap<EditorFactory, EditorFactory | undefined>();
 
 	const refreshWidget = (ctx: ExtensionContextLike) => {
 		if (currentDraftAttachments.length === 0) {
@@ -51,17 +50,15 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 		ctx.ui.setWidget(EXTENSION_WIDGET_KEY, lines, { placement: "aboveEditor" });
 	};
 
-	const createHooks = (): EditorHooks => ({
+	const createHooks = (ctx: ExtensionContextLike): EditorHooks => ({
 		publishDraft: (attachments: DraftAttachment[]) => {
 			currentDraftAttachments = [...attachments];
-			refreshWidget(activeContext);
+			refreshWidget(ctx);
 		},
 		queuePendingSubmission: (submission: PendingSubmission) => {
 			pendingSubmission = submission;
 		},
 		sendImagesOnly: (images: ImageContent[]) => {
-			const ctx = activeContext;
-
 			currentDraftAttachments = [];
 			pendingSubmission = undefined;
 			refreshWidget(ctx);
@@ -70,16 +67,11 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 	});
 
 	const installEditor = (ctx: ExtensionContextLike) => {
-		activeContext = ctx;
-		if (installedEditorFactory) {
-			ctx.ui.setEditorComponent(ctx.ui.getEditorComponent() ?? installedEditorFactory);
-			refreshWidget(ctx);
-			return;
-		}
-
 		const currentEditorFactory = ctx.ui.getEditorComponent();
-		const previousEditorFactory = currentEditorFactory;
-		const hooks = createHooks();
+		const previousEditorFactory = currentEditorFactory && installedEditorParents.has(currentEditorFactory)
+			? installedEditorParents.get(currentEditorFactory)
+			: currentEditorFactory;
+		const hooks = createHooks(ctx);
 		const ImageAttachmentEditor = createImageAttachmentEditor(deps, hooks);
 		const editorFactory: EditorFactory = (tui, theme, keybindings) => {
 			if (previousEditorFactory) {
@@ -94,7 +86,7 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 			return new ImageAttachmentEditor(tui, theme, keybindings);
 		};
 
-		installedEditorFactory = editorFactory;
+		installedEditorParents.set(editorFactory, previousEditorFactory);
 		ctx.ui.setEditorComponent(editorFactory);
 		refreshWidget(ctx);
 	};

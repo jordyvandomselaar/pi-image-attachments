@@ -59,6 +59,24 @@ export type AttachmentEditorDeps = ImageAttachmentBehaviorDeps & {
 
 const BRACKETED_PASTE_START = "\u001b[200~";
 const BRACKETED_PASTE_END = "\u001b[201~";
+const IMAGE_ATTACHMENT_BEHAVIOR = Symbol("pi-image-attachment-behavior");
+
+type ImageAttachmentBehaviorState = {
+	attachments: DraftAttachment[];
+	keybindings: RuntimeKeybindings | undefined;
+	deps: ImageAttachmentBehaviorDeps;
+	hooks: EditorHooks;
+	setText: (text: string) => void;
+	getText: () => string;
+	insertTextAtCursor: (text: string) => void;
+	handleInput: (data: string) => void;
+	getExpandedText?: () => string;
+	isShowingAutocomplete?: () => boolean;
+};
+
+type EditorWithImageAttachmentBehavior = EditorBase & {
+	[IMAGE_ATTACHMENT_BEHAVIOR]?: ImageAttachmentBehaviorState;
+};
 
 function extractBracketedPaste(data: string): string | null {
 	if (!data.startsWith(BRACKETED_PASTE_START) || !data.endsWith(BRACKETED_PASTE_END)) {
@@ -96,34 +114,50 @@ export function attachImageAttachmentBehavior(
 	deps: ImageAttachmentBehaviorDeps,
 	hooks: EditorHooks,
 ): EditorBase {
-	let attachments: DraftAttachment[] = [];
-	const runtimeKeybindings = isRuntimeKeybindings(keybindings) ? keybindings : undefined;
+	const editorWithBehavior = editor as EditorWithImageAttachmentBehavior;
+	const existingState = editorWithBehavior[IMAGE_ATTACHMENT_BEHAVIOR];
+	if (existingState) {
+		existingState.keybindings = isRuntimeKeybindings(keybindings) ? keybindings : undefined;
+		existingState.deps = deps;
+		existingState.hooks = hooks;
+		return editor;
+	}
 
-	const setText = editor.setText.bind(editor);
-	const getText = editor.getText.bind(editor);
-	const insertTextAtCursor = editor.insertTextAtCursor?.bind(editor) ??
+	const setText = editorWithBehavior.setText.bind(editorWithBehavior);
+	const getText = editorWithBehavior.getText.bind(editorWithBehavior);
+	const insertTextAtCursor = editorWithBehavior.insertTextAtCursor?.bind(editorWithBehavior) ??
 		((text: string) => setText(`${getText()}${text}`));
-	const handleInput = editor.handleInput.bind(editor);
-	const getExpandedText = editor.getExpandedText?.bind(editor);
-	const isShowingAutocomplete = editor.isShowingAutocomplete?.bind(editor);
+	const state: ImageAttachmentBehaviorState = {
+		attachments: [],
+		keybindings: isRuntimeKeybindings(keybindings) ? keybindings : undefined,
+		deps,
+		hooks,
+		setText,
+		getText,
+		insertTextAtCursor,
+		handleInput: editorWithBehavior.handleInput.bind(editorWithBehavior),
+		getExpandedText: editorWithBehavior.getExpandedText?.bind(editorWithBehavior),
+		isShowingAutocomplete: editorWithBehavior.isShowingAutocomplete?.bind(editorWithBehavior),
+	};
+	editorWithBehavior[IMAGE_ATTACHMENT_BEHAVIOR] = state;
 
 	const publishDraft = () => {
-		hooks.publishDraft(attachments);
+		state.hooks.publishDraft(state.attachments);
 	};
 
 	const syncAttachments = () => {
-		const text = getText();
-		attachments = attachments.filter((attachment) => text.includes(attachment.placeholder));
+		const text = state.getText();
+		state.attachments = state.attachments.filter((attachment) => text.includes(attachment.placeholder));
 	};
 
 	const clearDraft = () => {
-		attachments = [];
-		setText("");
+		state.attachments = [];
+		state.setText("");
 		publishDraft();
 	};
 
 	const nextPlaceholderNumber = () => {
-		const maxNumber = attachments.reduce((highest, attachment) => {
+		const maxNumber = state.attachments.reduce((highest, attachment) => {
 			const match = attachment.placeholder.match(/\[Image #(\d+)\]/);
 			const current = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
 			return Math.max(highest, current);
@@ -137,12 +171,12 @@ export function attachImageAttachmentBehavior(
 			return false;
 		}
 
-		const resolvedPath = resolveMaybeRelativePath(normalized, deps.resolveCwd());
-		if (!deps.looksLikeImagePath(resolvedPath)) {
+		const resolvedPath = resolveMaybeRelativePath(normalized, state.deps.resolveCwd());
+		if (!state.deps.looksLikeImagePath(resolvedPath)) {
 			return false;
 		}
 
-		const image = deps.readImageContentFromPath(resolvedPath);
+		const image = state.deps.readImageContentFromPath(resolvedPath);
 		if (!image) {
 			return false;
 		}
@@ -155,12 +189,12 @@ export function attachImageAttachmentBehavior(
 			originalPath: resolvedPath,
 		};
 
-		attachments.push(attachment);
-		insertTextAtCursor(`${placeholder} `);
+		state.attachments.push(attachment);
+		state.insertTextAtCursor(`${placeholder} `);
 		publishDraft();
 
-		if (deps.maybeResizeImage) {
-			void deps.maybeResizeImage(image)
+		if (state.deps.maybeResizeImage) {
+			void state.deps.maybeResizeImage(image)
 				.then((resized) => {
 					attachment.image = resized;
 				})
@@ -171,7 +205,7 @@ export function attachImageAttachmentBehavior(
 
 		if (isClipboardTempFile(resolvedPath)) {
 			try {
-				deps.unlinkFile?.(resolvedPath);
+				state.deps.unlinkFile?.(resolvedPath);
 			} catch {
 				// Best effort cleanup only.
 			}
@@ -180,33 +214,33 @@ export function attachImageAttachmentBehavior(
 		return true;
 	};
 
-	editor.setText = (text: string) => {
-		setText(text);
+	editorWithBehavior.setText = (text: string) => {
+		state.setText(text);
 		syncAttachments();
 		publishDraft();
 	};
 
-	editor.insertTextAtCursor = (text: string) => {
+	editorWithBehavior.insertTextAtCursor = (text: string) => {
 		if (tryAttachPastedPath(text)) {
 			return;
 		}
 
-		insertTextAtCursor(text);
+		state.insertTextAtCursor(text);
 		syncAttachments();
 		publishDraft();
 	};
 
-	editor.handleInput = (data: string) => {
+	editorWithBehavior.handleInput = (data: string) => {
 		const bracketedPaste = extractBracketedPaste(data);
 		if (bracketedPaste !== null && tryAttachPastedPath(bracketedPaste)) {
 			return;
 		}
 
-		const isSubmit = matchesSubmitInput(runtimeKeybindings, data) && !(isShowingAutocomplete?.() ?? false);
-		if (isSubmit && attachments.length > 0) {
-			const fullText = (getExpandedText?.() ?? getText()).trim();
+		const isSubmit = matchesSubmitInput(state.keybindings, data) && !(state.isShowingAutocomplete?.() ?? false);
+		if (isSubmit && state.attachments.length > 0) {
+			const fullText = (state.getExpandedText?.() ?? state.getText()).trim();
 			const usedAttachments = sortByPlaceholderNumber(
-				attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
+				state.attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
 			);
 
 			if (usedAttachments.length > 0 && !fullText.startsWith("/") && !fullText.trimStart().startsWith("!")) {
@@ -215,11 +249,11 @@ export function attachImageAttachmentBehavior(
 
 				if (!transformedText) {
 					clearDraft();
-					hooks.sendImagesOnly(images);
+					state.hooks.sendImagesOnly(images);
 					return;
 				}
 
-				hooks.queuePendingSubmission({
+				state.hooks.queuePendingSubmission({
 					matchText: fullText,
 					transformedText,
 					images,
@@ -227,13 +261,13 @@ export function attachImageAttachmentBehavior(
 			}
 		}
 
-		const beforeText = getText();
-		handleInput(data);
-		if (getText() !== beforeText) {
+		const beforeText = state.getText();
+		state.handleInput(data);
+		if (state.getText() !== beforeText) {
 			syncAttachments();
 			publishDraft();
 		}
 	};
 
-	return editor;
+	return editorWithBehavior;
 }
