@@ -5,10 +5,18 @@ import path from "node:path";
 import { createImageAttachmentEditor, type DraftAttachment, type PendingSubmission } from "../src/editor-factory.ts";
 import { readImageContentFromPath } from "../src/image-content.ts";
 
+const runtimeTui = { kind: "tui" } as const;
+const runtimeTheme = { kind: "theme" } as const;
+
 class FakeBaseEditor {
 	text = "";
 	showingAutocomplete = false;
 	inputs: string[] = [];
+	constructorArgs: unknown[];
+
+	constructor(...args: unknown[]) {
+		this.constructorArgs = args;
+	}
 
 	setText(text: string): void {
 		this.text = text;
@@ -104,17 +112,18 @@ describe("editor-factory", () => {
 				},
 			},
 		);
-		const editor = new Editor(
-			{},
-			{},
-			options?.keybindings === null ? undefined : (options?.keybindings ?? createKeybindings()),
-		) as FakeBaseEditor;
+		const keybindings = options?.keybindings === null ? undefined : (options?.keybindings ?? createKeybindings());
+		const editor = new Editor(runtimeTui, runtimeTheme, keybindings) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}
 
 	test("attaches pasted paths, increments placeholders, and queues stripped submissions", () => {
 		const editor = createEditor();
+		expect(editor.constructorArgs).toHaveLength(3);
+		expect(editor.constructorArgs[0]).toBe(runtimeTui);
+		expect(editor.constructorArgs[1]).toBe(runtimeTheme);
+		expect(editor.constructorArgs[2]).toHaveProperty("matches");
 		editor.insertTextAtCursor("Look ");
 		editor.insertTextAtCursor(`"${imagePath}"`);
 		const secondImagePath = path.join(tempDir, "second.png");

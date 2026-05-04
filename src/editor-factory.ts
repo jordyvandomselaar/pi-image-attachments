@@ -80,25 +80,13 @@ function matchesSubmitInput(keybindings: RuntimeKeybindings | undefined, data: s
 }
 
 export function createImageAttachmentEditor(deps: AttachmentEditorDeps, hooks: EditorHooks) {
-	const behaviorDeps = toBehaviorDeps(deps);
-
 	const BaseEditor = deps.BaseEditor;
 
 	return class ImageAttachmentEditor extends BaseEditor {
 		constructor(tui: any, theme: any, keybindings: any) {
 			super(tui, theme, keybindings);
-			attachImageAttachmentBehavior(this, keybindings, behaviorDeps, hooks);
+			attachImageAttachmentBehavior(this, keybindings, deps, hooks);
 		}
-	};
-}
-
-function toBehaviorDeps(deps: AttachmentEditorDeps): ImageAttachmentBehaviorDeps {
-	return {
-		resolveCwd: deps.resolveCwd,
-		looksLikeImagePath: deps.looksLikeImagePath,
-		readImageContentFromPath: deps.readImageContentFromPath,
-		maybeResizeImage: deps.maybeResizeImage,
-		unlinkFile: deps.unlinkFile,
 	};
 }
 

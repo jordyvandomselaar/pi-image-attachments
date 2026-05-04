@@ -6,7 +6,6 @@ import {
 	type DraftAttachment,
 	type EditorFactory,
 	type EditorHooks,
-	type ImageAttachmentBehaviorDeps,
 	type PendingSubmission,
 } from "./editor-factory.ts";
 import { PREFER_INLINE_SCREENSHOT_PROMPT } from "./prompt.ts";
@@ -68,14 +67,6 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 		},
 	});
 
-	const behaviorDeps: ImageAttachmentBehaviorDeps = {
-		resolveCwd: deps.resolveCwd,
-		looksLikeImagePath: deps.looksLikeImagePath,
-		readImageContentFromPath: deps.readImageContentFromPath,
-		maybeResizeImage: deps.maybeResizeImage,
-		unlinkFile: deps.unlinkFile,
-	};
-
 	const installEditor = (ctx: ExtensionContextLike) => {
 		const currentEditorFactory = ctx.ui.getEditorComponent();
 		const previousEditorFactory = currentEditorFactory === installedEditorFactory ? wrappedEditorFactory : currentEditorFactory;
@@ -86,7 +77,7 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 				return attachImageAttachmentBehavior(
 					previousEditorFactory(tui, theme, keybindings),
 					keybindings,
-					behaviorDeps,
+					deps,
 					hooks,
 				);
 			}
