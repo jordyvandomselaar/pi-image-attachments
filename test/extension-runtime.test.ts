@@ -3,6 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { readImageContentFromPath } from "../src/image-content.ts";
+import type { EditorFactory } from "../src/editor-factory.ts";
 import { registerImageAttachmentsExtension, type ExtensionContextLike } from "../src/extension-runtime.ts";
 import { PREFER_INLINE_SCREENSHOT_PROMPT } from "../src/prompt.ts";
 
@@ -33,6 +34,18 @@ class FakeBaseEditor {
 	}
 }
 
+class FakePreviousEditor extends FakeBaseEditor {
+	inputs: string[] = [];
+
+	handleInput(data: string): void {
+		this.inputs.push(data);
+	}
+
+	previousEditorBehavior(): string {
+		return "previous editor active";
+	}
+}
+
 function createKeybindings(actions: string[] = ["tui.input.submit"]): { matches(data: string, action: string): boolean } {
 	return {
 		matches: (data, action) => data === "SUBMIT" && actions.includes(action),
@@ -58,8 +71,8 @@ function createMockPi() {
 	};
 }
 
-function createContext(cwd: string, isIdle = true) {
-	let editorFactory: ((...args: any[]) => any) | undefined;
+function createContext(cwd: string, isIdle = true, initialEditorFactory?: EditorFactory) {
+	let editorFactory = initialEditorFactory;
 	const widgets: Array<{ key: string; content: string[] | undefined }> = [];
 	const ctx: ExtensionContextLike = {
 		cwd,
@@ -70,6 +83,9 @@ function createContext(cwd: string, isIdle = true) {
 			},
 			setEditorComponent(factory) {
 				editorFactory = factory ?? undefined;
+			},
+			getEditorComponent() {
+				return editorFactory;
 			},
 		},
 	};
@@ -96,10 +112,15 @@ describe("extension-runtime", () => {
 		expect(handlers.has("input")).toBe(true);
 	});
 
-	test("transforms queued submissions and clears the widget", async () => {
+	test("wraps a previous editor while image paste and submit hooks still use the standard constructor", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-"));
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
+		const previousEditorArgs: unknown[][] = [];
+		const previousEditorFactory = (...args: unknown[]) => {
+			previousEditorArgs.push(args);
+			return new FakePreviousEditor();
+		};
 
 		const { pi, handlers } = createMockPi();
 		registerImageAttachmentsExtension(pi as any, {
@@ -110,12 +131,17 @@ describe("extension-runtime", () => {
 			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
 		});
 
-		const { ctx, widgets, getEditorFactory } = createContext(dir);
+		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory as any);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, createKeybindings(), {});
+		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor;
+		expect(previousEditorArgs.at(-1)).toHaveLength(3);
+		expect(editor).toBeInstanceOf(FakePreviousEditor);
+		expect(editor.previousEditorBehavior()).toBe("previous editor active");
+
 		editor.insertTextAtCursor("Explain ");
 		editor.insertTextAtCursor(imagePath);
 		editor.handleInput("SUBMIT");
+		expect(editor.inputs).toEqual(["SUBMIT"]);
 
 		const transform = await handlers.get("input")?.[0]?.({ text: "Explain [Image #1]", images: [] }, ctx);
 		expect(transform).toEqual({
@@ -142,7 +168,7 @@ describe("extension-runtime", () => {
 
 		const { ctx, getEditorFactory } = createContext(dir, false);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, createKeybindings(["submit"]), {});
+		const editor = getEditorFactory()?.({}, {}, createKeybindings(["submit"]));
 		editor.insertTextAtCursor(imagePath);
 		editor.handleInput("SUBMIT");
 

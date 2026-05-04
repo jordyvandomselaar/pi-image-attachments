@@ -76,28 +76,31 @@ describe("editor-factory", () => {
 		autocomplete?: boolean;
 		submitActions?: string[];
 	}) {
-		const Editor = createImageAttachmentEditor({
-			BaseEditor: FakeBaseEditor as any,
-			resolveCwd: () => tempDir,
-			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
-			readImageContentFromPath,
-			maybeResizeImage: options?.resizeImage,
-			unlinkFile: (filePath) => {
-				deletedPaths.push(filePath);
-				fs.rmSync(filePath, { force: true });
+		const Editor = createImageAttachmentEditor(
+			{
+				BaseEditor: FakeBaseEditor as any,
+				resolveCwd: () => tempDir,
+				looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+				readImageContentFromPath,
+				maybeResizeImage: options?.resizeImage,
+				unlinkFile: (filePath) => {
+					deletedPaths.push(filePath);
+					fs.rmSync(filePath, { force: true });
+				},
 			},
-		});
-		const editor = new Editor({}, {}, createKeybindings(options?.submitActions), {
-			publishDraft: (attachments: DraftAttachment[]) => {
-				publishedDrafts.push([...attachments]);
+			{
+				publishDraft: (attachments: DraftAttachment[]) => {
+					publishedDrafts.push([...attachments]);
+				},
+				queuePendingSubmission: (submission: PendingSubmission) => {
+					queuedSubmissions.push(submission);
+				},
+				sendImagesOnly: (images) => {
+					sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
+				},
 			},
-			queuePendingSubmission: (submission: PendingSubmission) => {
-				queuedSubmissions.push(submission);
-			},
-			sendImagesOnly: (images) => {
-				sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
-			},
-		}) as FakeBaseEditor;
+		);
+		const editor = new Editor({}, {}, createKeybindings(options?.submitActions)) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}

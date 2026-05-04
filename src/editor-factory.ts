@@ -43,13 +43,18 @@ export type EditorBase = {
 
 export type EditorBaseConstructor = new (...args: any[]) => EditorBase;
 
-export type AttachmentEditorDeps = {
-	BaseEditor: EditorBaseConstructor;
+export type EditorFactory = (tui: any, theme: any, keybindings: any) => EditorBase;
+
+export type ImageAttachmentBehaviorDeps = {
 	resolveCwd: () => string;
 	looksLikeImagePath: (filePath: string) => boolean;
 	readImageContentFromPath: (filePath: string) => ImageContent | null;
 	maybeResizeImage?: (image: ImageContent) => Promise<ImageContent>;
 	unlinkFile?: (filePath: string) => void;
+};
+
+export type AttachmentEditorDeps = ImageAttachmentBehaviorDeps & {
+	BaseEditor: EditorBaseConstructor;
 };
 
 const BRACKETED_PASTE_START = "\u001b[200~";
@@ -74,147 +79,172 @@ function matchesSubmitInput(keybindings: RuntimeKeybindings | undefined, data: s
 	return keybindings.matches(data, "tui.input.submit") || keybindings.matches(data, "submit");
 }
 
-export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
+export function createImageAttachmentEditor(deps: AttachmentEditorDeps, hooks: EditorHooks) {
+	const behaviorDeps = toBehaviorDeps(deps);
+
 	const BaseEditor = deps.BaseEditor;
 
 	return class ImageAttachmentEditor extends BaseEditor {
-		private attachments: DraftAttachment[] = [];
-		private hooks: EditorHooks;
-		private keybindings: RuntimeKeybindings | undefined;
-
-		constructor(...args: any[]) {
-			const hooks = args.pop() as EditorHooks;
-			const runtimeKeybindings = args[2];
-			super(...args);
-			this.hooks = hooks;
-			this.keybindings = isRuntimeKeybindings(runtimeKeybindings) ? runtimeKeybindings : undefined;
-		}
-
-		override setText(text: string): void {
-			super.setText(text);
-			this.syncAttachments();
-			this.publishDraft();
-		}
-
-		override insertTextAtCursor(text: string): void {
-			if (this.tryAttachPastedPath(text)) {
-				return;
-			}
-			super.insertTextAtCursor(text);
-			this.syncAttachments();
-			this.publishDraft();
-		}
-
-		override handleInput(data: string): void {
-			const bracketedPaste = extractBracketedPaste(data);
-			if (bracketedPaste !== null && this.tryAttachPastedPath(bracketedPaste)) {
-				return;
-			}
-
-			const isSubmit = matchesSubmitInput(this.keybindings, data) && !(this.isShowingAutocomplete?.() ?? false);
-			if (isSubmit && this.attachments.length > 0) {
-				const fullText = (this.getExpandedText?.() ?? this.getText()).trim();
-				const usedAttachments = sortByPlaceholderNumber(
-					this.attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
-				);
-
-				if (usedAttachments.length > 0 && !fullText.startsWith("/") && !fullText.trimStart().startsWith("!")) {
-					const transformedText = removeImagePlaceholders(fullText);
-					const images = usedAttachments.map((attachment) => attachment.image);
-
-					if (!transformedText) {
-						this.clearDraft();
-						this.hooks.sendImagesOnly(images);
-						return;
-					}
-
-					this.hooks.queuePendingSubmission({
-						matchText: fullText,
-						transformedText,
-						images,
-					});
-				}
-			}
-
-			const beforeText = this.getText();
-			super.handleInput(data);
-			if (this.getText() !== beforeText) {
-				this.syncAttachments();
-				this.publishDraft();
-			}
-		}
-
-		private clearDraft(): void {
-			this.attachments = [];
-			super.setText("");
-			this.publishDraft();
-		}
-
-		private tryAttachPastedPath(rawText: string): boolean {
-			const normalized = normalizePastedPath(rawText);
-			if (!normalized) {
-				return false;
-			}
-
-			const resolvedPath = resolveMaybeRelativePath(normalized, deps.resolveCwd());
-			if (!deps.looksLikeImagePath(resolvedPath)) {
-				return false;
-			}
-
-			const image = deps.readImageContentFromPath(resolvedPath);
-			if (!image) {
-				return false;
-			}
-
-			const placeholder = createImagePlaceholder(this.nextPlaceholderNumber());
-			const attachment: DraftAttachment = {
-				placeholder,
-				image,
-				label: path.basename(resolvedPath),
-				originalPath: resolvedPath,
-			};
-
-			this.attachments.push(attachment);
-			super.insertTextAtCursor(`${placeholder} `);
-			this.publishDraft();
-
-			if (deps.maybeResizeImage) {
-				void deps.maybeResizeImage(image)
-					.then((resized) => {
-						attachment.image = resized;
-					})
-					.catch(() => {
-						// Keep original image if resize fails.
-					});
-			}
-
-			if (isClipboardTempFile(resolvedPath)) {
-				try {
-					deps.unlinkFile?.(resolvedPath);
-				} catch {
-					// Best effort cleanup only.
-				}
-			}
-
-			return true;
-		}
-
-		private nextPlaceholderNumber(): number {
-			const maxNumber = this.attachments.reduce((highest, attachment) => {
-				const match = attachment.placeholder.match(/\[Image #(\d+)\]/);
-				const current = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
-				return Math.max(highest, current);
-			}, 0);
-			return maxNumber + 1;
-		}
-
-		private syncAttachments(): void {
-			const text = this.getText();
-			this.attachments = this.attachments.filter((attachment) => text.includes(attachment.placeholder));
-		}
-
-		private publishDraft(): void {
-			this.hooks.publishDraft(this.attachments);
+		constructor(tui: any, theme: any, keybindings: any) {
+			super(tui, theme, keybindings);
+			attachImageAttachmentBehavior(this, keybindings, behaviorDeps, hooks);
 		}
 	};
+}
+
+function toBehaviorDeps(deps: AttachmentEditorDeps): ImageAttachmentBehaviorDeps {
+	return {
+		resolveCwd: deps.resolveCwd,
+		looksLikeImagePath: deps.looksLikeImagePath,
+		readImageContentFromPath: deps.readImageContentFromPath,
+		maybeResizeImage: deps.maybeResizeImage,
+		unlinkFile: deps.unlinkFile,
+	};
+}
+
+export function attachImageAttachmentBehavior(
+	editor: EditorBase,
+	keybindings: unknown,
+	deps: ImageAttachmentBehaviorDeps,
+	hooks: EditorHooks,
+): EditorBase {
+	let attachments: DraftAttachment[] = [];
+	const runtimeKeybindings = isRuntimeKeybindings(keybindings) ? keybindings : undefined;
+
+	const setText = editor.setText.bind(editor);
+	const getText = editor.getText.bind(editor);
+	const insertTextAtCursor = editor.insertTextAtCursor.bind(editor);
+	const handleInput = editor.handleInput.bind(editor);
+	const getExpandedText = editor.getExpandedText?.bind(editor);
+	const isShowingAutocomplete = editor.isShowingAutocomplete?.bind(editor);
+
+	const publishDraft = () => {
+		hooks.publishDraft(attachments);
+	};
+
+	const syncAttachments = () => {
+		const text = getText();
+		attachments = attachments.filter((attachment) => text.includes(attachment.placeholder));
+	};
+
+	const clearDraft = () => {
+		attachments = [];
+		setText("");
+		publishDraft();
+	};
+
+	const nextPlaceholderNumber = () => {
+		const maxNumber = attachments.reduce((highest, attachment) => {
+			const match = attachment.placeholder.match(/\[Image #(\d+)\]/);
+			const current = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+			return Math.max(highest, current);
+		}, 0);
+		return maxNumber + 1;
+	};
+
+	const tryAttachPastedPath = (rawText: string) => {
+		const normalized = normalizePastedPath(rawText);
+		if (!normalized) {
+			return false;
+		}
+
+		const resolvedPath = resolveMaybeRelativePath(normalized, deps.resolveCwd());
+		if (!deps.looksLikeImagePath(resolvedPath)) {
+			return false;
+		}
+
+		const image = deps.readImageContentFromPath(resolvedPath);
+		if (!image) {
+			return false;
+		}
+
+		const placeholder = createImagePlaceholder(nextPlaceholderNumber());
+		const attachment: DraftAttachment = {
+			placeholder,
+			image,
+			label: path.basename(resolvedPath),
+			originalPath: resolvedPath,
+		};
+
+		attachments.push(attachment);
+		insertTextAtCursor(`${placeholder} `);
+		publishDraft();
+
+		if (deps.maybeResizeImage) {
+			void deps.maybeResizeImage(image)
+				.then((resized) => {
+					attachment.image = resized;
+				})
+				.catch(() => {
+					// Keep original image if resize fails.
+				});
+		}
+
+		if (isClipboardTempFile(resolvedPath)) {
+			try {
+				deps.unlinkFile?.(resolvedPath);
+			} catch {
+				// Best effort cleanup only.
+			}
+		}
+
+		return true;
+	};
+
+	editor.setText = (text: string) => {
+		setText(text);
+		syncAttachments();
+		publishDraft();
+	};
+
+	editor.insertTextAtCursor = (text: string) => {
+		if (tryAttachPastedPath(text)) {
+			return;
+		}
+
+		insertTextAtCursor(text);
+		syncAttachments();
+		publishDraft();
+	};
+
+	editor.handleInput = (data: string) => {
+		const bracketedPaste = extractBracketedPaste(data);
+		if (bracketedPaste !== null && tryAttachPastedPath(bracketedPaste)) {
+			return;
+		}
+
+		const isSubmit = matchesSubmitInput(runtimeKeybindings, data) && !(isShowingAutocomplete?.() ?? false);
+		if (isSubmit && attachments.length > 0) {
+			const fullText = (getExpandedText?.() ?? getText()).trim();
+			const usedAttachments = sortByPlaceholderNumber(
+				attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
+			);
+
+			if (usedAttachments.length > 0 && !fullText.startsWith("/") && !fullText.trimStart().startsWith("!")) {
+				const transformedText = removeImagePlaceholders(fullText);
+				const images = usedAttachments.map((attachment) => attachment.image);
+
+				if (!transformedText) {
+					clearDraft();
+					hooks.sendImagesOnly(images);
+					return;
+				}
+
+				hooks.queuePendingSubmission({
+					matchText: fullText,
+					transformedText,
+					images,
+				});
+			}
+		}
+
+		const beforeText = getText();
+		handleInput(data);
+		if (getText() !== beforeText) {
+			syncAttachments();
+			publishDraft();
+		}
+	};
+
+	return editor;
 }
