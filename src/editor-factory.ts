@@ -35,7 +35,7 @@ type RuntimeKeybindings = {
 export type EditorBase = {
 	setText(text: string): void;
 	getText(): string;
-	insertTextAtCursor?(text: string): void;
+	insertTextAtCursor(text: string): void;
 	handleInput(data: string): void;
 	getExpandedText?(): string;
 	isShowingAutocomplete?(): boolean;
@@ -113,7 +113,7 @@ export function attachImageAttachmentBehavior(
 
 	const setText = editor.setText.bind(editor);
 	const getText = editor.getText.bind(editor);
-	const insertTextAtCursor = editor.insertTextAtCursor?.bind(editor) ?? ((text: string) => setText(`${getText()}${text}`));
+	const insertTextAtCursor = editor.insertTextAtCursor.bind(editor);
 	const handleInput = editor.handleInput.bind(editor);
 	const getExpandedText = editor.getExpandedText?.bind(editor);
 	const isShowingAutocomplete = editor.isShowingAutocomplete?.bind(editor);

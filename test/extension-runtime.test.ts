@@ -46,6 +46,10 @@ class FakePreviousEditor {
 		return this.text;
 	}
 
+	insertTextAtCursor(text: string): void {
+		this.text += text;
+	}
+
 	handleInput(data: string): void {
 		this.inputs.push(data);
 	}
@@ -209,17 +213,13 @@ describe("extension-runtime", () => {
 
 	test("wires screenshot tool results, continues untouched input, and resets widgets on session switch", async () => {
 		const { pi, handlers } = createMockPi();
-		const loadedPaths: string[] = [];
-		const loadedImage = { type: "image", data: "loaded-shot", mimeType: "image/png" } as const;
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
 			resolveCwd: () => "/cwd",
 			looksLikeImagePath: () => false,
 			readImageContentFromPath: () => null,
-			loadImageContentFromPath: async (filePath) => {
-				loadedPaths.push(filePath);
-				return loadedImage;
-			},
+			loadImageContentFromPath: async (filePath) =>
+				filePath.endsWith("shot.png") ? { type: "image", data: filePath, mimeType: "image/png" } : null,
 		});
 
 		const result = await handlers.get("tool_result")?.[0]?.(
@@ -231,8 +231,12 @@ describe("extension-runtime", () => {
 			},
 			createContext("/cwd").ctx,
 		);
-		expect(loadedPaths).toEqual(["/cwd/shot.png"]);
-		expect(result?.content).toContain(loadedImage);
+		expect(result).toEqual({
+			content: [
+				{ type: "text", text: "Saved screenshot to shot.png." },
+				{ type: "image", data: "/cwd/shot.png", mimeType: "image/png" },
+			],
+		});
 
 		const continueResult = await handlers.get("input")?.[0]?.({ text: "plain text", images: [] }, createContext("/cwd").ctx);
 		expect(continueResult).toEqual({ action: "continue" });
