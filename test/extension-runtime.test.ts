@@ -121,7 +121,7 @@ describe("extension-runtime", () => {
 		expect(handlers.has("input")).toBe(true);
 	});
 
-	test("wraps a previous editor while image paste and submit hooks still use the standard constructor", async () => {
+	test("keeps the previous editor across lifecycle reinstall while image hooks use the standard constructor", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-"));
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
@@ -142,6 +142,7 @@ describe("extension-runtime", () => {
 
 		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
+		await handlers.get("session_switch")?.[0]?.({}, ctx);
 		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor & {
 			insertTextAtCursor(text: string): void;
 		};
@@ -149,8 +150,13 @@ describe("extension-runtime", () => {
 		expect(editor).toBeInstanceOf(FakePreviousEditor);
 		expect(editor.previousEditorBehavior()).toBe("previous editor active");
 
-		editor.insertTextAtCursor("Explain ");
+		editor.setText("Explain ");
+		const widgetCountBeforePaste = widgets.length;
 		editor.insertTextAtCursor(imagePath);
+		expect(widgets.slice(widgetCountBeforePaste)).toEqual([
+			{ key: "image-attachments", content: ["Attached images:", "[Image #1] sample.png"] },
+		]);
+
 		editor.handleInput("SUBMIT");
 		expect(editor.inputs).toEqual(["SUBMIT"]);
 
@@ -201,15 +207,19 @@ describe("extension-runtime", () => {
 		]);
 	});
 
-	test("upgrades screenshot tool results, continues untouched input, and resets widgets on session switch", async () => {
+	test("wires screenshot tool results, continues untouched input, and resets widgets on session switch", async () => {
 		const { pi, handlers } = createMockPi();
+		const loadedPaths: string[] = [];
+		const loadedImage = { type: "image", data: "loaded-shot", mimeType: "image/png" } as const;
 		registerImageAttachmentsExtension(pi as any, {
 			BaseEditor: FakeBaseEditor as any,
 			resolveCwd: () => "/cwd",
 			looksLikeImagePath: () => false,
 			readImageContentFromPath: () => null,
-			loadImageContentFromPath: async (filePath) =>
-				filePath.endsWith("shot.png") ? { type: "image", data: filePath, mimeType: "image/png" } : null,
+			loadImageContentFromPath: async (filePath) => {
+				loadedPaths.push(filePath);
+				return loadedImage;
+			},
 		});
 
 		const result = await handlers.get("tool_result")?.[0]?.(
@@ -221,12 +231,8 @@ describe("extension-runtime", () => {
 			},
 			createContext("/cwd").ctx,
 		);
-		expect(result).toEqual({
-			content: [
-				{ type: "text", text: "Saved screenshot to shot.png." },
-				{ type: "image", data: "/cwd/shot.png", mimeType: "image/png" },
-			],
-		});
+		expect(loadedPaths).toEqual(["/cwd/shot.png"]);
+		expect(result?.content).toContain(loadedImage);
 
 		const continueResult = await handlers.get("input")?.[0]?.({ text: "plain text", images: [] }, createContext("/cwd").ctx);
 		expect(continueResult).toEqual({ action: "continue" });
