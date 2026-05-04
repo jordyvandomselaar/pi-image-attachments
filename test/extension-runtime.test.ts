@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -6,6 +6,20 @@ import { readImageContentFromPath } from "../src/image-content.ts";
 import type { EditorFactory } from "../src/editor-factory.ts";
 import { registerImageAttachmentsExtension, type ExtensionContextLike } from "../src/extension-runtime.ts";
 import { PREFER_INLINE_SCREENSHOT_PROMPT } from "../src/prompt.ts";
+
+const tempDirs: string[] = [];
+
+function createTempDir(prefix: string): string {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+	tempDirs.push(dir);
+	return dir;
+}
+
+afterEach(() => {
+	for (const dir of tempDirs.splice(0)) {
+		fs.rmSync(dir, { recursive: true, force: true });
+	}
+});
 
 class FakeBaseEditor {
 	text = "";
@@ -122,7 +136,7 @@ describe("extension-runtime", () => {
 	});
 
 	test("keeps the previous editor across lifecycle reinstall while image hooks use the standard constructor", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-"));
+		const dir = createTempDir("pi-image-runtime-");
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
 		const previousEditorArgs: Parameters<EditorFactory>[] = [];
@@ -169,8 +183,51 @@ describe("extension-runtime", () => {
 		expect(widgets.at(-1)).toEqual({ key: "image-attachments", content: undefined });
 	});
 
+	test("does not add another image layer when a later editor wraps this extension", async () => {
+		const dir = createTempDir("pi-image-runtime-downstream-");
+		const imagePath = path.join(dir, "sample.png");
+		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
+		const previousEditorFactory: EditorFactory = () => new FakePreviousEditor();
+
+		const { pi, handlers } = createMockPi();
+		registerImageAttachmentsExtension(pi as any, {
+			BaseEditor: FakeBaseEditor as any,
+			resolveCwd: () => dir,
+			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+			readImageContentFromPath,
+			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
+		});
+
+		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory);
+		await handlers.get("session_start")?.[0]?.({}, ctx);
+		const imageEditorFactory = getEditorFactory();
+		const downstreamFactory: EditorFactory = (tui, theme, keybindings) => imageEditorFactory!(tui, theme, keybindings);
+		ctx.ui.setEditorComponent(downstreamFactory);
+
+		await handlers.get("session_switch")?.[0]?.({}, ctx);
+		expect(getEditorFactory()).toBe(downstreamFactory);
+
+		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor & {
+			insertTextAtCursor(text: string): void;
+		};
+		editor.setText("Explain ");
+		const widgetCountBeforePaste = widgets.length;
+		editor.insertTextAtCursor(imagePath);
+		expect(widgets.slice(widgetCountBeforePaste)).toEqual([
+			{ key: "image-attachments", content: ["Attached images:", "[Image #1] sample.png"] },
+		]);
+
+		editor.handleInput("SUBMIT");
+		const transform = await handlers.get("input")?.[0]?.({ text: "Explain [Image #1]", images: [] }, ctx);
+		expect(transform).toEqual({
+			action: "transform",
+			text: "Explain",
+			images: [readImageContentFromPath(imagePath)],
+		});
+	});
+
 	test("sends image-only drafts with the correct idle and busy delivery modes", async () => {
-		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-busy-"));
+		const dir = createTempDir("pi-image-runtime-busy-");
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("busy-image"));
 
