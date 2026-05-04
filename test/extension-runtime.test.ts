@@ -34,8 +34,17 @@ class FakeBaseEditor {
 	}
 }
 
-class FakePreviousEditor extends FakeBaseEditor {
+class FakePreviousEditor {
+	text = "";
 	inputs: string[] = [];
+
+	setText(text: string): void {
+		this.text = text;
+	}
+
+	getText(): string {
+		return this.text;
+	}
 
 	handleInput(data: string): void {
 		this.inputs.push(data);
@@ -116,9 +125,9 @@ describe("extension-runtime", () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-"));
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("runtime-image"));
-		const previousEditorArgs: unknown[][] = [];
-		const previousEditorFactory = (...args: unknown[]) => {
-			previousEditorArgs.push(args);
+		const previousEditorArgs: Parameters<EditorFactory>[] = [];
+		const previousEditorFactory: EditorFactory = (tui, theme, keybindings) => {
+			previousEditorArgs.push([tui, theme, keybindings]);
 			return new FakePreviousEditor();
 		};
 
@@ -131,9 +140,11 @@ describe("extension-runtime", () => {
 			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
 		});
 
-		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory as any);
+		const { ctx, widgets, getEditorFactory } = createContext(dir, true, previousEditorFactory);
 		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor;
+		const editor = getEditorFactory()?.({}, {}, createKeybindings()) as FakePreviousEditor & {
+			insertTextAtCursor(text: string): void;
+		};
 		expect(previousEditorArgs.at(-1)).toHaveLength(3);
 		expect(editor).toBeInstanceOf(FakePreviousEditor);
 		expect(editor.previousEditorBehavior()).toBe("previous editor active");
@@ -152,7 +163,7 @@ describe("extension-runtime", () => {
 		expect(widgets.at(-1)).toEqual({ key: "image-attachments", content: undefined });
 	});
 
-	test("sends image-only drafts as steer messages when the agent is busy", async () => {
+	test("sends image-only drafts with the correct idle and busy delivery modes", async () => {
 		const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-image-runtime-busy-"));
 		const imagePath = path.join(dir, "sample.png");
 		fs.writeFileSync(imagePath, Buffer.from("busy-image"));
@@ -166,16 +177,26 @@ describe("extension-runtime", () => {
 			loadImageContentFromPath: async (filePath) => readImageContentFromPath(filePath),
 		});
 
-		const { ctx, getEditorFactory } = createContext(dir, false);
-		await handlers.get("session_start")?.[0]?.({}, ctx);
-		const editor = getEditorFactory()?.({}, {}, createKeybindings(["submit"]));
-		editor.insertTextAtCursor(imagePath);
-		editor.handleInput("SUBMIT");
+		const busyContext = createContext(dir, false);
+		await handlers.get("session_start")?.[0]?.({}, busyContext.ctx);
+		const busyEditor = busyContext.getEditorFactory()?.({}, {}, createKeybindings());
+		busyEditor.insertTextAtCursor(imagePath);
+		busyEditor.handleInput("SUBMIT");
+
+		const idleContext = createContext(dir, true);
+		await handlers.get("session_switch")?.[0]?.({}, idleContext.ctx);
+		const idleEditor = idleContext.getEditorFactory()?.({}, {}, createKeybindings());
+		idleEditor.insertTextAtCursor(imagePath);
+		idleEditor.handleInput("SUBMIT");
 
 		expect(sentMessages).toEqual([
 			{
 				content: [readImageContentFromPath(imagePath)],
 				options: { deliverAs: "steer" },
+			},
+			{
+				content: [readImageContentFromPath(imagePath)],
+				options: undefined,
 			},
 		]);
 	});

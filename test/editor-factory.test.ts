@@ -74,7 +74,6 @@ describe("editor-factory", () => {
 	function createEditor(options?: {
 		resizeImage?: (image: { type: "image"; data: string; mimeType: string }) => Promise<{ type: "image"; data: string; mimeType: string }>;
 		autocomplete?: boolean;
-		submitActions?: string[];
 	}) {
 		const Editor = createImageAttachmentEditor(
 			{
@@ -100,7 +99,7 @@ describe("editor-factory", () => {
 				},
 			},
 		);
-		const editor = new Editor({}, {}, createKeybindings(options?.submitActions)) as FakeBaseEditor;
+		const editor = new Editor({}, {}, createKeybindings()) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}
@@ -124,15 +123,6 @@ describe("editor-factory", () => {
 			},
 		]);
 		expect(sentImageMessages).toEqual([]);
-	});
-
-	test("accepts legacy submit action names", () => {
-		const editor = createEditor({ submitActions: ["submit"] });
-		editor.insertTextAtCursor(imagePath);
-		editor.handleInput("SUBMIT");
-
-		expect(sentImageMessages).toHaveLength(1);
-		expect(queuedSubmissions).toEqual([]);
 	});
 
 	test("sends image-only drafts immediately", () => {

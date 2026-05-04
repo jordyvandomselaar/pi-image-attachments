@@ -35,7 +35,7 @@ type RuntimeKeybindings = {
 export type EditorBase = {
 	setText(text: string): void;
 	getText(): string;
-	insertTextAtCursor(text: string): void;
+	insertTextAtCursor?(text: string): void;
 	handleInput(data: string): void;
 	getExpandedText?(): string;
 	isShowingAutocomplete?(): boolean;
@@ -76,7 +76,7 @@ function matchesSubmitInput(keybindings: RuntimeKeybindings | undefined, data: s
 		return false;
 	}
 
-	return keybindings.matches(data, "tui.input.submit") || keybindings.matches(data, "submit");
+	return keybindings.matches(data, "tui.input.submit");
 }
 
 export function createImageAttachmentEditor(deps: AttachmentEditorDeps, hooks: EditorHooks) {
@@ -113,7 +113,7 @@ export function attachImageAttachmentBehavior(
 
 	const setText = editor.setText.bind(editor);
 	const getText = editor.getText.bind(editor);
-	const insertTextAtCursor = editor.insertTextAtCursor.bind(editor);
+	const insertTextAtCursor = editor.insertTextAtCursor?.bind(editor) ?? ((text: string) => setText(`${getText()}${text}`));
 	const handleInput = editor.handleInput.bind(editor);
 	const getExpandedText = editor.getExpandedText?.bind(editor);
 	const isShowingAutocomplete = editor.isShowingAutocomplete?.bind(editor);
