@@ -35,7 +35,7 @@ type RuntimeKeybindings = {
 export type EditorBase = {
 	setText(text: string): void;
 	getText(): string;
-	insertTextAtCursor(text: string): void;
+	insertTextAtCursor?(text: string): void;
 	handleInput(data: string): void;
 	getExpandedText?(): string;
 	isShowingAutocomplete?(): boolean;
@@ -43,8 +43,9 @@ export type EditorBase = {
 
 export type EditorBaseConstructor = new (...args: any[]) => EditorBase;
 
-export type AttachmentEditorDeps = {
-	BaseEditor: EditorBaseConstructor;
+export type EditorFactory = (tui: any, theme: any, keybindings: any) => EditorBase;
+
+export type ImageAttachmentBehaviorDeps = {
 	resolveCwd: () => string;
 	looksLikeImagePath: (filePath: string) => boolean;
 	readImageContentFromPath: (filePath: string) => ImageContent | null;
@@ -52,8 +53,30 @@ export type AttachmentEditorDeps = {
 	unlinkFile?: (filePath: string) => void;
 };
 
+export type AttachmentEditorDeps = ImageAttachmentBehaviorDeps & {
+	BaseEditor: EditorBaseConstructor;
+};
+
 const BRACKETED_PASTE_START = "\u001b[200~";
 const BRACKETED_PASTE_END = "\u001b[201~";
+const IMAGE_ATTACHMENT_BEHAVIOR = Symbol("pi-image-attachment-behavior");
+
+type ImageAttachmentBehaviorState = {
+	attachments: DraftAttachment[];
+	keybindings: RuntimeKeybindings | undefined;
+	deps: ImageAttachmentBehaviorDeps;
+	hooks: EditorHooks;
+	setText: (text: string) => void;
+	getText: () => string;
+	insertTextAtCursor: (text: string) => void;
+	handleInput: (data: string) => void;
+	getExpandedText?: () => string;
+	isShowingAutocomplete?: () => boolean;
+};
+
+type EditorWithImageAttachmentBehavior = EditorBase & {
+	[IMAGE_ATTACHMENT_BEHAVIOR]?: ImageAttachmentBehaviorState;
+};
 
 function extractBracketedPaste(data: string): string | null {
 	if (!data.startsWith(BRACKETED_PASTE_START) || !data.endsWith(BRACKETED_PASTE_END)) {
@@ -71,150 +94,180 @@ function matchesSubmitInput(keybindings: RuntimeKeybindings | undefined, data: s
 		return false;
 	}
 
-	return keybindings.matches(data, "tui.input.submit") || keybindings.matches(data, "submit");
+	return keybindings.matches(data, "tui.input.submit");
 }
 
-export function createImageAttachmentEditor(deps: AttachmentEditorDeps) {
+export function createImageAttachmentEditor(deps: AttachmentEditorDeps, hooks: EditorHooks) {
 	const BaseEditor = deps.BaseEditor;
 
 	return class ImageAttachmentEditor extends BaseEditor {
-		private attachments: DraftAttachment[] = [];
-		private hooks: EditorHooks;
-		private keybindings: RuntimeKeybindings | undefined;
-
-		constructor(...args: any[]) {
-			const hooks = args.pop() as EditorHooks;
-			const runtimeKeybindings = args[2];
-			super(...args);
-			this.hooks = hooks;
-			this.keybindings = isRuntimeKeybindings(runtimeKeybindings) ? runtimeKeybindings : undefined;
-		}
-
-		override setText(text: string): void {
-			super.setText(text);
-			this.syncAttachments();
-			this.publishDraft();
-		}
-
-		override insertTextAtCursor(text: string): void {
-			if (this.tryAttachPastedPath(text)) {
-				return;
-			}
-			super.insertTextAtCursor(text);
-			this.syncAttachments();
-			this.publishDraft();
-		}
-
-		override handleInput(data: string): void {
-			const bracketedPaste = extractBracketedPaste(data);
-			if (bracketedPaste !== null && this.tryAttachPastedPath(bracketedPaste)) {
-				return;
-			}
-
-			const isSubmit = matchesSubmitInput(this.keybindings, data) && !(this.isShowingAutocomplete?.() ?? false);
-			if (isSubmit && this.attachments.length > 0) {
-				const fullText = (this.getExpandedText?.() ?? this.getText()).trim();
-				const usedAttachments = sortByPlaceholderNumber(
-					this.attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
-				);
-
-				if (usedAttachments.length > 0 && !fullText.startsWith("/") && !fullText.trimStart().startsWith("!")) {
-					const transformedText = removeImagePlaceholders(fullText);
-					const images = usedAttachments.map((attachment) => attachment.image);
-
-					if (!transformedText) {
-						this.clearDraft();
-						this.hooks.sendImagesOnly(images);
-						return;
-					}
-
-					this.hooks.queuePendingSubmission({
-						matchText: fullText,
-						transformedText,
-						images,
-					});
-				}
-			}
-
-			const beforeText = this.getText();
-			super.handleInput(data);
-			if (this.getText() !== beforeText) {
-				this.syncAttachments();
-				this.publishDraft();
-			}
-		}
-
-		private clearDraft(): void {
-			this.attachments = [];
-			super.setText("");
-			this.publishDraft();
-		}
-
-		private tryAttachPastedPath(rawText: string): boolean {
-			const normalized = normalizePastedPath(rawText);
-			if (!normalized) {
-				return false;
-			}
-
-			const resolvedPath = resolveMaybeRelativePath(normalized, deps.resolveCwd());
-			if (!deps.looksLikeImagePath(resolvedPath)) {
-				return false;
-			}
-
-			const image = deps.readImageContentFromPath(resolvedPath);
-			if (!image) {
-				return false;
-			}
-
-			const placeholder = createImagePlaceholder(this.nextPlaceholderNumber());
-			const attachment: DraftAttachment = {
-				placeholder,
-				image,
-				label: path.basename(resolvedPath),
-				originalPath: resolvedPath,
-			};
-
-			this.attachments.push(attachment);
-			super.insertTextAtCursor(`${placeholder} `);
-			this.publishDraft();
-
-			if (deps.maybeResizeImage) {
-				void deps.maybeResizeImage(image)
-					.then((resized) => {
-						attachment.image = resized;
-					})
-					.catch(() => {
-						// Keep original image if resize fails.
-					});
-			}
-
-			if (isClipboardTempFile(resolvedPath)) {
-				try {
-					deps.unlinkFile?.(resolvedPath);
-				} catch {
-					// Best effort cleanup only.
-				}
-			}
-
-			return true;
-		}
-
-		private nextPlaceholderNumber(): number {
-			const maxNumber = this.attachments.reduce((highest, attachment) => {
-				const match = attachment.placeholder.match(/\[Image #(\d+)\]/);
-				const current = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
-				return Math.max(highest, current);
-			}, 0);
-			return maxNumber + 1;
-		}
-
-		private syncAttachments(): void {
-			const text = this.getText();
-			this.attachments = this.attachments.filter((attachment) => text.includes(attachment.placeholder));
-		}
-
-		private publishDraft(): void {
-			this.hooks.publishDraft(this.attachments);
+		constructor(tui: any, theme: any, keybindings: any) {
+			super(tui, theme, keybindings);
+			attachImageAttachmentBehavior(this, keybindings, deps, hooks);
 		}
 	};
+}
+
+export function attachImageAttachmentBehavior(
+	editor: EditorBase,
+	keybindings: unknown,
+	deps: ImageAttachmentBehaviorDeps,
+	hooks: EditorHooks,
+): EditorBase {
+	const editorWithBehavior = editor as EditorWithImageAttachmentBehavior;
+	const existingState = editorWithBehavior[IMAGE_ATTACHMENT_BEHAVIOR];
+	if (existingState) {
+		existingState.keybindings = isRuntimeKeybindings(keybindings) ? keybindings : undefined;
+		existingState.deps = deps;
+		existingState.hooks = hooks;
+		return editor;
+	}
+
+	const setText = editorWithBehavior.setText.bind(editorWithBehavior);
+	const getText = editorWithBehavior.getText.bind(editorWithBehavior);
+	const insertTextAtCursor = editorWithBehavior.insertTextAtCursor?.bind(editorWithBehavior) ??
+		((text: string) => setText(`${getText()}${text}`));
+	const state: ImageAttachmentBehaviorState = {
+		attachments: [],
+		keybindings: isRuntimeKeybindings(keybindings) ? keybindings : undefined,
+		deps,
+		hooks,
+		setText,
+		getText,
+		insertTextAtCursor,
+		handleInput: editorWithBehavior.handleInput.bind(editorWithBehavior),
+		getExpandedText: editorWithBehavior.getExpandedText?.bind(editorWithBehavior),
+		isShowingAutocomplete: editorWithBehavior.isShowingAutocomplete?.bind(editorWithBehavior),
+	};
+	editorWithBehavior[IMAGE_ATTACHMENT_BEHAVIOR] = state;
+
+	const publishDraft = () => {
+		state.hooks.publishDraft(state.attachments);
+	};
+
+	const syncAttachments = () => {
+		const text = state.getText();
+		state.attachments = state.attachments.filter((attachment) => text.includes(attachment.placeholder));
+	};
+
+	const clearDraft = () => {
+		state.attachments = [];
+		state.setText("");
+		publishDraft();
+	};
+
+	const nextPlaceholderNumber = () => {
+		const maxNumber = state.attachments.reduce((highest, attachment) => {
+			const match = attachment.placeholder.match(/\[Image #(\d+)\]/);
+			const current = match ? Number.parseInt(match[1] ?? "0", 10) : 0;
+			return Math.max(highest, current);
+		}, 0);
+		return maxNumber + 1;
+	};
+
+	const tryAttachPastedPath = (rawText: string) => {
+		const normalized = normalizePastedPath(rawText);
+		if (!normalized) {
+			return false;
+		}
+
+		const resolvedPath = resolveMaybeRelativePath(normalized, state.deps.resolveCwd());
+		if (!state.deps.looksLikeImagePath(resolvedPath)) {
+			return false;
+		}
+
+		const image = state.deps.readImageContentFromPath(resolvedPath);
+		if (!image) {
+			return false;
+		}
+
+		const placeholder = createImagePlaceholder(nextPlaceholderNumber());
+		const attachment: DraftAttachment = {
+			placeholder,
+			image,
+			label: path.basename(resolvedPath),
+			originalPath: resolvedPath,
+		};
+
+		state.attachments.push(attachment);
+		state.insertTextAtCursor(`${placeholder} `);
+		publishDraft();
+
+		if (state.deps.maybeResizeImage) {
+			void state.deps.maybeResizeImage(image)
+				.then((resized) => {
+					attachment.image = resized;
+				})
+				.catch(() => {
+					// Keep original image if resize fails.
+				});
+		}
+
+		if (isClipboardTempFile(resolvedPath)) {
+			try {
+				state.deps.unlinkFile?.(resolvedPath);
+			} catch {
+				// Best effort cleanup only.
+			}
+		}
+
+		return true;
+	};
+
+	editorWithBehavior.setText = (text: string) => {
+		state.setText(text);
+		syncAttachments();
+		publishDraft();
+	};
+
+	editorWithBehavior.insertTextAtCursor = (text: string) => {
+		if (tryAttachPastedPath(text)) {
+			return;
+		}
+
+		state.insertTextAtCursor(text);
+		syncAttachments();
+		publishDraft();
+	};
+
+	editorWithBehavior.handleInput = (data: string) => {
+		const bracketedPaste = extractBracketedPaste(data);
+		if (bracketedPaste !== null && tryAttachPastedPath(bracketedPaste)) {
+			return;
+		}
+
+		const isSubmit = matchesSubmitInput(state.keybindings, data) && !(state.isShowingAutocomplete?.() ?? false);
+		if (isSubmit && state.attachments.length > 0) {
+			const fullText = (state.getExpandedText?.() ?? state.getText()).trim();
+			const usedAttachments = sortByPlaceholderNumber(
+				state.attachments.filter((attachment) => fullText.includes(attachment.placeholder)),
+			);
+
+			if (usedAttachments.length > 0 && !fullText.startsWith("/") && !fullText.trimStart().startsWith("!")) {
+				const transformedText = removeImagePlaceholders(fullText);
+				const images = usedAttachments.map((attachment) => attachment.image);
+
+				if (!transformedText) {
+					clearDraft();
+					state.hooks.sendImagesOnly(images);
+					return;
+				}
+
+				state.hooks.queuePendingSubmission({
+					matchText: fullText,
+					transformedText,
+					images,
+				});
+			}
+		}
+
+		const beforeText = state.getText();
+		state.handleInput(data);
+		if (state.getText() !== beforeText) {
+			syncAttachments();
+			publishDraft();
+		}
+	};
+
+	return editorWithBehavior;
 }

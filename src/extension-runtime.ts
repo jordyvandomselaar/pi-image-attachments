@@ -1,8 +1,11 @@
 import type { ContentBlock, ImageContent } from "./content.ts";
 import {
+	attachImageAttachmentBehavior,
 	createImageAttachmentEditor,
 	type AttachmentEditorDeps,
 	type DraftAttachment,
+	type EditorFactory,
+	type EditorHooks,
 	type PendingSubmission,
 } from "./editor-factory.ts";
 import { PREFER_INLINE_SCREENSHOT_PROMPT } from "./prompt.ts";
@@ -18,7 +21,8 @@ export type ExtensionContextLike = {
 	isIdle(): boolean;
 	ui: {
 		setWidget(key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }): void;
-		setEditorComponent(factory: ((...args: any[]) => any) | undefined): void;
+		setEditorComponent(factory: EditorFactory | undefined): void;
+		getEditorComponent(): EditorFactory | undefined;
 	};
 };
 
@@ -31,6 +35,7 @@ const EXTENSION_WIDGET_KEY = "image-attachments";
 export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRuntimeDeps): void {
 	let currentDraftAttachments: DraftAttachment[] = [];
 	let pendingSubmission: PendingSubmission | undefined;
+	const installedEditorParents = new WeakMap<EditorFactory, EditorFactory | undefined>();
 
 	const refreshWidget = (ctx: ExtensionContextLike) => {
 		if (currentDraftAttachments.length === 0) {
@@ -45,26 +50,44 @@ export function registerImageAttachmentsExtension(pi: PiLike, deps: ExtensionRun
 		ctx.ui.setWidget(EXTENSION_WIDGET_KEY, lines, { placement: "aboveEditor" });
 	};
 
-	const EditorClass = createImageAttachmentEditor(deps);
+	const createHooks = (ctx: ExtensionContextLike): EditorHooks => ({
+		publishDraft: (attachments: DraftAttachment[]) => {
+			currentDraftAttachments = [...attachments];
+			refreshWidget(ctx);
+		},
+		queuePendingSubmission: (submission: PendingSubmission) => {
+			pendingSubmission = submission;
+		},
+		sendImagesOnly: (images: ImageContent[]) => {
+			currentDraftAttachments = [];
+			pendingSubmission = undefined;
+			refreshWidget(ctx);
+			pi.sendUserMessage(images, ctx.isIdle() ? undefined : { deliverAs: "steer" });
+		},
+	});
 
 	const installEditor = (ctx: ExtensionContextLike) => {
-		ctx.ui.setEditorComponent((...args: any[]) =>
-			new EditorClass(...args, {
-				publishDraft: (attachments: DraftAttachment[]) => {
-					currentDraftAttachments = [...attachments];
-					refreshWidget(ctx);
-				},
-				queuePendingSubmission: (submission: PendingSubmission) => {
-					pendingSubmission = submission;
-				},
-				sendImagesOnly: (images: ImageContent[]) => {
-					currentDraftAttachments = [];
-					pendingSubmission = undefined;
-					refreshWidget(ctx);
-					pi.sendUserMessage(images, ctx.isIdle() ? undefined : { deliverAs: "steer" });
-				},
-			}),
-		);
+		const currentEditorFactory = ctx.ui.getEditorComponent();
+		const previousEditorFactory = currentEditorFactory && installedEditorParents.has(currentEditorFactory)
+			? installedEditorParents.get(currentEditorFactory)
+			: currentEditorFactory;
+		const hooks = createHooks(ctx);
+		const ImageAttachmentEditor = createImageAttachmentEditor(deps, hooks);
+		const editorFactory: EditorFactory = (tui, theme, keybindings) => {
+			if (previousEditorFactory) {
+				return attachImageAttachmentBehavior(
+					previousEditorFactory(tui, theme, keybindings),
+					keybindings,
+					deps,
+					hooks,
+				);
+			}
+
+			return new ImageAttachmentEditor(tui, theme, keybindings);
+		};
+
+		installedEditorParents.set(editorFactory, previousEditorFactory);
+		ctx.ui.setEditorComponent(editorFactory);
 		refreshWidget(ctx);
 	};
 

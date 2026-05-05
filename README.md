@@ -45,6 +45,15 @@ This package uses Pi's `pi.extensions` manifest in `package.json`, so Pi can loa
 
 The npm publish is intentionally limited by the `files` whitelist in `package.json`, so repo-only assets like `media/pi-image-attachments-demo-2026-03-17.mp4` are kept out of the published package.
 
+## Custom editor composability
+
+`pi-image-attachments` targets Pi 0.71+ and uses the composable custom-editor API: it reads `ctx.ui.getEditorComponent()` before installing its own editor with `ctx.ui.setEditorComponent()`.
+
+- If another extension installed an editor first, this package wraps that editor instance so its class and behavior remain active while image placeholders are layered on top.
+- If no editor is installed yet, this package wraps Pi's default `CustomEditor` behavior.
+- Load order still matters: install editor extensions that should be preserved before `pi-image-attachments`. A later extension that does not compose with `getEditorComponent()` can still replace the editor chain.
+- Older Pi versions without `getEditorComponent()` are not supported by this package version; there is intentionally no fallback or compatibility shim.
+
 ## Tests
 
 ```bash

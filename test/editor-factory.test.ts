@@ -5,10 +5,18 @@ import path from "node:path";
 import { createImageAttachmentEditor, type DraftAttachment, type PendingSubmission } from "../src/editor-factory.ts";
 import { readImageContentFromPath } from "../src/image-content.ts";
 
+const runtimeTui = { kind: "tui" } as const;
+const runtimeTheme = { kind: "theme" } as const;
+
 class FakeBaseEditor {
 	text = "";
 	showingAutocomplete = false;
 	inputs: string[] = [];
+	constructorArgs: unknown[];
+
+	constructor(...args: unknown[]) {
+		this.constructorArgs = args;
+	}
 
 	setText(text: string): void {
 		this.text = text;
@@ -28,6 +36,9 @@ class FakeBaseEditor {
 
 	handleInput(data: string): void {
 		this.inputs.push(data);
+		if (data.startsWith("REPLACE:")) {
+			this.text = data.slice("REPLACE:".length);
+		}
 	}
 
 	isShowingAutocomplete(): boolean {
@@ -74,36 +85,45 @@ describe("editor-factory", () => {
 	function createEditor(options?: {
 		resizeImage?: (image: { type: "image"; data: string; mimeType: string }) => Promise<{ type: "image"; data: string; mimeType: string }>;
 		autocomplete?: boolean;
-		submitActions?: string[];
+		keybindings?: { matches(data: string, action: string): boolean } | null;
+		readImageContent?: typeof readImageContentFromPath;
 	}) {
-		const Editor = createImageAttachmentEditor({
-			BaseEditor: FakeBaseEditor as any,
-			resolveCwd: () => tempDir,
-			looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
-			readImageContentFromPath,
-			maybeResizeImage: options?.resizeImage,
-			unlinkFile: (filePath) => {
-				deletedPaths.push(filePath);
-				fs.rmSync(filePath, { force: true });
+		const Editor = createImageAttachmentEditor(
+			{
+				BaseEditor: FakeBaseEditor as any,
+				resolveCwd: () => tempDir,
+				looksLikeImagePath: (filePath) => filePath.endsWith(".png") && fs.existsSync(filePath),
+				readImageContentFromPath: options?.readImageContent ?? readImageContentFromPath,
+				maybeResizeImage: options?.resizeImage,
+				unlinkFile: (filePath) => {
+					deletedPaths.push(filePath);
+					fs.rmSync(filePath, { force: true });
+				},
 			},
-		});
-		const editor = new Editor({}, {}, createKeybindings(options?.submitActions), {
-			publishDraft: (attachments: DraftAttachment[]) => {
-				publishedDrafts.push([...attachments]);
+			{
+				publishDraft: (attachments: DraftAttachment[]) => {
+					publishedDrafts.push([...attachments]);
+				},
+				queuePendingSubmission: (submission: PendingSubmission) => {
+					queuedSubmissions.push(submission);
+				},
+				sendImagesOnly: (images) => {
+					sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
+				},
 			},
-			queuePendingSubmission: (submission: PendingSubmission) => {
-				queuedSubmissions.push(submission);
-			},
-			sendImagesOnly: (images) => {
-				sentImageMessages.push(images as Array<{ type: "image"; data: string; mimeType: string }>);
-			},
-		}) as FakeBaseEditor;
+		);
+		const keybindings = options?.keybindings === null ? undefined : (options?.keybindings ?? createKeybindings());
+		const editor = new Editor(runtimeTui, runtimeTheme, keybindings) as FakeBaseEditor;
 		editor.showingAutocomplete = options?.autocomplete ?? false;
 		return editor;
 	}
 
 	test("attaches pasted paths, increments placeholders, and queues stripped submissions", () => {
 		const editor = createEditor();
+		expect(editor.constructorArgs).toHaveLength(3);
+		expect(editor.constructorArgs[0]).toBe(runtimeTui);
+		expect(editor.constructorArgs[1]).toBe(runtimeTheme);
+		expect(editor.constructorArgs[2]).toHaveProperty("matches");
 		editor.insertTextAtCursor("Look ");
 		editor.insertTextAtCursor(`"${imagePath}"`);
 		const secondImagePath = path.join(tempDir, "second.png");
@@ -121,15 +141,6 @@ describe("editor-factory", () => {
 			},
 		]);
 		expect(sentImageMessages).toEqual([]);
-	});
-
-	test("accepts legacy submit action names", () => {
-		const editor = createEditor({ submitActions: ["submit"] });
-		editor.insertTextAtCursor(imagePath);
-		editor.handleInput("SUBMIT");
-
-		expect(sentImageMessages).toHaveLength(1);
-		expect(queuedSubmissions).toEqual([]);
 	});
 
 	test("sends image-only drafts immediately", () => {
@@ -179,12 +190,27 @@ describe("editor-factory", () => {
 		expect(sentImageMessages).toEqual([]);
 	});
 
+	test("delegates unhandled pasted input when keybindings are unavailable or images cannot be read", () => {
+		const editor = createEditor({ keybindings: null });
+		editor.handleInput("\u001b[200~   \u001b[201~");
+
+		expect(editor.inputs).toEqual(["\u001b[200~   \u001b[201~"]);
+		expect(publishedDrafts).toEqual([]);
+
+		const unreadableImageEditor = createEditor({ readImageContent: () => null });
+		unreadableImageEditor.insertTextAtCursor(imagePath);
+		expect(unreadableImageEditor.getText()).toBe(imagePath);
+		expect(publishedDrafts.at(-1)).toEqual([]);
+		expect(queuedSubmissions).toEqual([]);
+		expect(sentImageMessages).toEqual([]);
+	});
+
 	test("removing placeholders drops attachments and autocomplete bypasses submit interception", () => {
 		const editor = createEditor({ autocomplete: true });
 		editor.insertTextAtCursor(imagePath);
 		expect(publishedDrafts.at(-1)).toHaveLength(1);
 
-		editor.setText("just text");
+		editor.handleInput("REPLACE:just text");
 		expect(publishedDrafts.at(-1)).toEqual([]);
 
 		editor.insertTextAtCursor(imagePath);
